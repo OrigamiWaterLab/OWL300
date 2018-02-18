@@ -55,7 +55,7 @@ print(seal_pressure)
 
 To determine the bolt frequency, the calculation found [here](https://www.engineersedge.com/general_engineering/gasket_cover_compression.htm) was used and is reproduced below:
 
-![bolt_spacing_equation](images\bolt_gasket_spacing_equation.PNG)
+![bolt_spacing_equation](images/bolt_gasket_spacing_equation.PNG)
 
 | Variable | Definition                                      |
 | -------- | ----------------------------------------------- |
@@ -70,7 +70,7 @@ To determine the bolt frequency, the calculation found [here](https://www.engine
 | Pmax     | = Maximum gasket pressure                       |
 | t        | = Cover / flange thickness                      |
 
-![bolt_spacing_equation](images\gasket_bolt_2.gif)![bolt_spacing_equation](images\gasket_bolt.gif)
+![bolt_spacing_equation](images/gasket_bolt_2.gif)![bolt_spacing_equation](images/gasket_bolt.gif)
 
 Here is the Python equation we'll use for this equation:
 
