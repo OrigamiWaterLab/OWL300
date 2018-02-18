@@ -1,8 +1,8 @@
 
 
-# Gasket
+# Gasket Design
 
-1. The gasket's function is to prevent leakage through the outer seams of the OWL300. To prevent leaks, the gasket is evenly compressed with angle aluminum angle. The gasket itself is an elastomer that can deform into uneven shapes to prevent leakage. For a gasket to work properly, it needs to be compressed sufficiently and evenly given the gasket material, loading conditions, and other design criteria.
+The gasket's function is to prevent leakage through the outer seams of the OWL300. To prevent leaks, the gasket is evenly compressed with angle aluminum angle. The gasket itself is an elastomer that can deform into uneven shapes to prevent leakage. For a gasket to work properly, it needs to be compressed sufficiently and evenly given the gasket material, loading conditions, and other design criteria.
 
 ## Design
 
@@ -25,7 +25,7 @@ Some of these variables are inextricably linked. For instance, the closer the bo
 ```python
 from aide_design.play import *
 
-al_t = 0.25 *u.inch
+al_t = 0.125 *u.inch
 al_w = 0.75 *u.inch
 bolt_d = 0.25 *u.inch
 seal_t = 0.060 *u.inch
@@ -45,10 +45,12 @@ The first step is to determine the required pressure. The recommended deflection
 ```python
 
 epdm_modulus = 5*10**6*u.pascal
-seal_compression_ratio = 0.05
-seal_pressure = epdm_modulus*seal_compression_ratio
-print(seal_pressure)
-
+seal_compression_ratio_max = 0.4
+seal_compression_ratio_min = 0.05
+seal_pressure_max = epdm_modulus*seal_compression_ratio_max
+seal_pressure_min = epdm_modulus*seal_compression_ratio_min
+seal_deflection_max = seal_compression_ratio_max*al_t
+seal_deflection_min = seal_compression_ratio_min*al_t
 ```
 
 ### Bolt Frequency
@@ -75,25 +77,31 @@ To determine the bolt frequency, the calculation found [here](https://www.engine
 Here is the Python equation we'll use for this equation:
 
 ```python
-def gasket_bolt_spacing(a, b, E, H_delta, P_min, t):
-  return ((480*(a/b)*E*t**3*(H_delta))/(19*P_min))**0.25
+def gasket_bolt_spacing(a, b, E, H_delta, P_min, P_max, t):
+  return ((480*(a/b)*E*t**3*(H_delta))/(13*P_min + 2*P_max))**0.25
 
 
 al_modulus = 68.9 * 10**9 * u.pascal
 
-bolt_spacing = gasket_bolt_spacing(al_w, al_w, al_modulus, seal_compression_ratio*seal_t, seal_pressure, al_t)
+H_delta = seal_deflection_max-seal_deflection_min
+
+bolt_spacing = gasket_bolt_spacing(al_w, al_w, al_modulus, H_delta, seal_pressure_min, seal_pressure_max, al_t)
 print(bolt_spacing)
-# >>> 4.25 inch
+# >>> 4.58 inch
 ```
+
+### Bolt Selection
+
+The bolt needed to have a conical head that could seal, be stainless, 1/4"-20 and 3/4" long. Here's what shows up on [McMasterCarr](https://www.mcmaster.com/#standard-flat-head-screws/=1bm8pd8). The most affordable is an undercut Philips-drive.  
 
 ### Bolt Force
 
 To calculate the tensile force on each bolt, multiply the area each bolt is responsible for by the seal pressure by 3 because of the 3x pressure load at the bolt head.
 
 ```python
-bolt_force = al_w*bolt_spacing*seal_pressure*3
+bolt_force = al_w*bolt_spacing*(seal_pressure_max+seal_pressure_min)/2*3
 print(bolt_force.to(u.newton))
-# >>> 1542 newton
+# >>> 7256 newton
 
 stainless_18_8_yield_strength = 65000*u.pound_force_per_square_inch
 
@@ -101,10 +109,48 @@ bolt_yield_strength = bolt_d**2*np.pi/4 * stainless_18_8_yield_strength
 
 bolt_safety_factor = bolt_yield_strength/bolt_force
 print(bolt_safety_factor.to(u.dimensionless))
+# >>> 1.96
 ```
 
-The 1542 newton bolt force leaves a safety factor of 9.2, well within safety concerns.
+The 6096 newton bolt force leaves a safety factor of 2.3. Now the proof load of the nut-bolt threads needs to be determined. From [here](http://www.ssina.com/download_a_file/fasteners.pdf) it is clear that the thread cross-sectional area should be multiplied by the proof load pressure to get the stripping strength. The following are copied tables pertaining to 18-8 stainless steel:
 
-### Bolt Selection
+![bolt_proof_stress](images/bolt_proof_stress.PNG)
+![thread_stress_area](images/thread_stress_area.PNG)
 
-The bolt needed to have a conical head that could seal, be stainless, 1/4"-20 and 3/4" long. Here's what shows up on [McMasterCarr](https://www.mcmaster.com/#standard-flat-head-screws/=1bm8pd8)
+```python
+def bolt_proof_load(proof_load_stress, thread_stress_area):
+  return (proof_load_stress*thread_stress_area).to(u.newton)
+
+proof_load_stress = 125* 10**3 * u.pound_force_per_square_inch
+thread_stress_area = 0.0318 * u.sq_in
+
+bolt_proof_load = bolt_proof_load(proof_load_stress, thread_stress_area)
+print(bolt_proof_load)
+
+# >>> 1.768e+04 newton
+
+thread_safety_factor = bolt_proof_load/bolt_force
+print(thread_safety_factor.to(u.dimensionless))
+
+# >>> 2.4
+```
+
+Looks like the bolt would break before the threads would slip, and with the 4.9 safety factor, the design is well within limits.
+
+### Bolt Tightening Torque
+
+To determine the torque required to properly tighten the load, a [linearly-elastic model with a k factor was used.](https://www.fastenal.com/content/feds/pdf/Article%20-%20Bolted%20Joint%20Design.pdf)
+
+![torque_equation](images/torque_equation.PNG)
+![k_factor_torque](images/k_factor_torque.PNG)
+
+Below is an attempt to determine a conservative torque estimate:
+
+```python
+torque = bolt_d*bolt_force*0.20
+print(torque.to(u.inch*u.pound_force))
+
+# >>> 81.56 force_pound * inch
+```
+
+From a [standard table of proper torques](https://spaenaur.com/pdf/sectionD/D48.pdf), this value checks out.
