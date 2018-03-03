@@ -38,13 +38,17 @@ def vertical_wall_hydrostatic_force(h, w, water_height_above_wall=0*u.m, rho=exp
   -------
   Force
       The total force generated across the wall
+
+  Tests
+  -----
+  >>> vertical_wall_hydrostatic_force(0.4*u.m, 4*u.inch)
+  > <Quantity(79.7084512, 'newton')>
   """
   return (rho*g*h**2/2*w + rho*g*water_height_above_wall*h*w).to(u.newton)
 
 # Test for 10 cm
-vertical_wall_hydrostatic_force(10*u.cm, 1.22*u.m, water_height_above_wall=1.22*u.m)
 
-vertical_wall_hydrostatic_force(3.)
+vertical_wall_hydrostatic_force(0.4*u.m, 4*u.inch)
 
 
 ```
@@ -66,29 +70,70 @@ Showing that the deflection increases with the distance between the ribs cubed, 
 So to determine the max distance between ribs, given the max allowable deformation, we can solve for L:
 
 ```python
-
-@u.wraps(u.m, [u.mm, u.newton, u.pascal, u.m, u.m], False)
-def simply_supported_beam_length_central_deflection(max_deflection, F, E, h, w, **kwargs):
+# This could and probably should be implemented with sympy. They have a Beam class under sympy.physics.continuum_mechanics.beam
+def beam_length_deflection(max_deflection, forces, E, geometry, boundary_conditions, **kwargs):
   """
-  the elastic deflection (at the midpoint C) of a beam, loaded at its center, supported by two simple supports is given by:
-  \[
-  \delta_{C}={\frac  {FL^{3}}{48EI}}
-  \]
-  where:
-  * F  = Force acting on the center of the beam
-  * L = Length of the beam between the supports
-  * E = Modulus of Elasticity
-  * I = Area moment of inertia of cross section  
+  Beam lengths given a max deflection not to exceed.
 
-  We solve for I assuming the beam is sideways, and the h represents the beams thickness, and w is the width.
+  This function can handle the following geometries types:
+
+  * rectangle, with 'w' signifying the width of the cross-section, and 'h' is the height.
+
+  This function can handle the following boundary condition types:
+
+  * simply_supported, where one end is pinned, and the other is on a roller
+  * fixed, where both ends are fixed so they can resist the bending moment
+
+  This can handle the following force types:
+
+  * point there is a point load at 'a' distance from one end
+  * uniformly_distributed is a load with 'omega' force/length across the full length
+  * uniformly_varying is a load that varies from 'omega_0' force/length to 'omega_L' force/length
+
+  Return the length of the beam that ensures no more than the specified max deflection.
+
+  >>> beam_length_deflection(5.5*u.mm, 80*u.newton, 2240*10**6*u.pascal, {"type": "rectangle", "w":4*u.inch, "h":0.25*u.inch}, {"type": "fixed"})
+  <Quantity(0.6352897664188726, 'meter')>
+
   """
+
   #Calculate the Area moment of inertia for the beam cross section:
-  I = w*h**3/12
+  g_type = geometry["type"]
+  if g_type == "rectangle":
+    I = geometry["w"]*geometry["h"]**3/3
+  #https://www.engineersedge.com/material_science/moment-inertia-gyration-7.htm
+  elif g_type == "angle":
+    a,t = geometry["a"], geometry["t"]
+    y = a-(a**2+a*t-t**2)/(a*(2*a-t))
+    I = 1/3*(t*y**3 + a*(a-y)**3 - (a-t)*(a-y-t)**3)
+  else:
+    raise UserWarning("no valid geometry type specified")
 
-  return (max_deflection*48*E*I/F)**(1/3)
+  # Calculate deflection based on the boundary conditions
+  bc_type = boundary_conditions["type"]
+  if bc_type == "simply_supported":
+    L = ((max_deflection*48*E*I/forces)**(1/3)).to(u.m)
+  if bc_type == "fixed":
+    L = (max_deflection*192*E*I/forces)**(1/3)
 
 
-simply_supported_beam_length_central_deflection(1*u.mm, 1000*u.newton, 2.6*10**6*u.pascal, 1*u.m, 1*u.m)
+
+  return L.to(u.m)
+
+
+print(beam_length_deflection(5.5*u.mm, 80*u.newton, 2240*10**6*u.pascal, {"type": "rectangle", "w":4*u.inch, "h":0.25*u.inch}, {"type": "fixed"}))
+
+def deflection_simply_supported(F, E, h, w, L):
+  """
+  >>> deflection_simply_supported(80*u.newton, 2240*10**6*u.pascal, 0.25*u.inch, 4*u.inch, 0.4*u.m)
+  <Quantity(5.491450537208758, 'millimeter')>
+  """
+  I = (w*h**3)/3
+  deflection = ((F*(L**3))/(48*E*I)).to(u.mm)
+  return deflection
+
+deflection_simply_supported(80*u.newton, 2240*10**6*u.pascal, 0.25*u.inch, 4*u.inch, 0.4*u.m)
+
 
 
 ```
@@ -104,9 +149,9 @@ Now we should be able to use these two equations to determine the max allowable 
 
 ```python
 
-def support_spacing_and_contact_force(t, w, max_deflection, **kwargs):
+def support_spacing_and_contact_force(t, max_deflection, **kwargs):
   """
-  The max spacing of supports of a simply supported beam that has no more deflection than max_deflection, and is acted upon by hydrostatic forces. Consider a vertical plate holding back some fluid. Now the goal is to know the vertical spacing of the next rib that holds the plate vertical and keeps it from deforming.
+  The max spacing of supports of a simply supported beam that has no more deflection than max_deflection, and is acted upon by hydrostatic forces. Consider a vertical plate holding back some fluid. Now the goal is to know the vertical spacing of the next rib that holds the plate vertical and keeps it from deforming. t is the thickness of the plate
 
   We first take a stab at the force, and then refine the guess until we arrive within 99% of the correct answer.
   """
@@ -117,20 +162,24 @@ def support_spacing_and_contact_force(t, w, max_deflection, **kwargs):
   err = 1.0
 
   # The modulus of elasticity for ABS
-  E = 2.6 * 10**6 *u.pascal
+  E = 2240 * 10**6 *u.pascal
+
+  # width doesn't matter
+  w = 4*u.m
 
   while abs(err) > 0.01 :
-    L =simply_supported_beam_length_central_deflection(max_deflection, F, E, t, w, **kwargs)
+    L = beam_length_deflection(max_deflection, F, E, t, w, **kwargs)
     F_new = vertical_wall_hydrostatic_force(L, w, **kwargs)
     err = (F_new-F)/(F_new+F)
     F = (err + 1)*F
+    print(F)
 
   return L,F
 
 
-support_spacing_and_contact_force(0.25*u.inch, 1.1*u.m, 1*u.mm, water_height_above_wall=1*u.m)
-# >>> (<Quantity(0.2225668705883485, 'meter')>,
-# >>>  <Quantity(242.20919484631642, 'newton')>)
+support_spacing_and_contact_force(0.25*u.inch, 1*u.mm)
+# >>> (<Quantity(0.28, 'meter')>,
+# >>>  <Quantity(1588, 'newton')>)
 
 ```
 
@@ -140,7 +189,6 @@ Now we'll get the spacing of the additional ribs by chaining these answers toget
 
 ```python
 
-def
 
 ```
 
@@ -156,3 +204,10 @@ The hydrostatic pressure increases linearly with depth, according to:
 
 
 Luckily, Fusion360 has a built in Hydrostatic force static analysis simulator that we can use to determine the maximum acceptable spacing for a given maximum deflection:
+
+
+Let's test all the functions:
+```python
+import doctest
+doctest.testmod(verbose=True)
+```
