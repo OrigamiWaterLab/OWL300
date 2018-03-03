@@ -164,12 +164,13 @@ def support_spacing_and_contact_force(t, max_deflection, **kwargs):
   # The modulus of elasticity for ABS
   E = 2240 * 10**6 *u.pascal
 
-  # width doesn't matter
-  w = 4*u.m
+  w = 4*u.inch
+
+  force = {}
 
   while abs(err) > 0.01 :
-    L = beam_length_deflection(max_deflection, F, E, t, w, **kwargs)
-    F_new = vertical_wall_hydrostatic_force(L, w, **kwargs)
+    L = beam_length_deflection(max_deflection, F, 2240*10**6*u.pascal, {"type": "rectangle", "w":w, "h":t}, {"type": "simply_supported"})
+    F_new = vertical_wall_hydrostatic_force(L, w)
     err = (F_new-F)/(F_new+F)
     F = (err + 1)*F
     print(F)
